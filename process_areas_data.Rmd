@@ -23,7 +23,7 @@ options(scipen = 9)
 # load deprivation data and location data
 ```{r}
 # deprivation data
-imd_data <- vroom("data/imd2019lsoa.csv")
+imd_data <- vroom("data/raw/imd2019lsoa.csv")
 dim(imd_data)
 imd_data_sub<-imd_data %>% filter(`DateCode` == 2019, `Measurement` == 'Score', 
                             `Indices of Deprivation` == "a. Index of Multiple Deprivation (IMD)") %>% 
@@ -31,9 +31,9 @@ imd_data_sub<-imd_data %>% filter(`DateCode` == 2019, `Measurement` == 'Score',
 rm(imd_data)
 
 # postocode / LSOA /MSOA data
-areas_data<-vroom("data/PCD_OA_LSOA_MSOA_LAD_MAY19_UK_LU.csv") # lsoa11cd is the LSOA
+areas_data<-vroom("data/raw/PCD_OA_LSOA_MSOA_LAD_MAY19_UK_LU.csv") # lsoa11cd is the LSOA
 dim(areas_data)
-place_names_data <- vroom("data/MSOA-Names-1.17.csv") %>% select(msoa11cd, msoa11nm,msoa11hclnm)
+place_names_data <- vroom("data/raw/MSOA-Names-1.17.csv") %>% select(msoa11cd, msoa11nm,msoa11hclnm)
 areas_data_sub<- areas_data %>% 
   filter(lsoa11cd %in% imd_data_sub$FeatureCode) %>% 
   select(pcds, lsoa11cd, lsoa11nm, ladnm, msoa11nm,msoa11cd, ladcd) %>%
@@ -42,7 +42,7 @@ rm(areas_data)
 
 
 # country / postcode / longlat
-postcode_data <- vroom("data/open_postcode_geo.csv/open_postcode_geo.csv", col_names = F, col_select=c(X7, X1, X8,X9))
+postcode_data <- vroom("data/raw/open_postcode_geo.csv/open_postcode_geo.csv", col_names = F, col_select=c(X7, X1, X8,X9))
 postcode_data_sub <- postcode_data %>% filter(X7 == 'England') %>% 
                        filter(X1 %in% areas_data_sub$pcds) %>% 
                        select(postcode=X1, long=X8, lat=X9) %>% distinct()
@@ -51,7 +51,7 @@ rm(postcode_data)
 
 
 # LSOA centroids
-lsoa_coords <- vroom("data/Lower_Layer_Super_Output_Areas_(December_2011)_Population_Weighted_Centroids.csv")
+lsoa_coords <- vroom("data/raw/Lower_Layer_Super_Output_Areas_(December_2011)_Population_Weighted_Centroids.csv")
 lsoa_coords <- bind_cols(lsoa_coords, 
                         lsoa_coords %>%
                           st_as_sf(coords = c("X", "Y"), crs = 27700) %>%
@@ -78,8 +78,8 @@ rm(data_merged)
 
 ```{r}
 # house price data
-all.files <- list.files(path = "data/price_paid/", pattern = "pricepaid*", full.names = T)
-l <- lapply(all.files, vroom, col_names = F, col_select=c(X2, X3, X4,X11,X13,X14,X9))
+all.files <- list.files(path = "data/raw/price_paid/", pattern = "pricepaid*", full.names = T)
+l <- lapply(all.files, vroom, col_names = F, col_select=c(X2, X3, X4, X11, X13, X14, X9))
 
 house_price_data <- bind_rows(l) 
 dim(house_price_data)
@@ -87,7 +87,7 @@ rm(l)
 
 house_price_data_sub<- house_price_data %>%
   select(price=X2, date = X3, postcode = X4, LSOA = X11, area = X13, county = X14, type=X9) %>% 
-  filter(price >=38000 & price <= 10000000) %>% # 10M max
+  filter(price >=38000 & price <= 10000000) %>% # 10M max and 38K + remove other obviosu non-residential stuff
   arrange(price) %>% 
   filter(!grepl("ROOM|UNIT|OFFICE|GARAGE|POD|STORE|CHALET", type)) %>% select(-type) %>% 
   left_join(areas_data_sub, by= c("postcode"="pcds")) 
@@ -140,7 +140,7 @@ for (i in 1:length(areas$ladcd)){
   compare_wo_out<- full_join(prices_merged_gr_lsoa, prices_merged_gr_lsoa_wo_out) %>% 
     mutate(pct_removed = (1-(n_wo_out/n))*100 ) %>% arrange(-pct_removed)
   
-  write.csv(compare_wo_out,paste0("data/processed/figures/removed_", area_name, ".csv" ))
+  write.csv(compare_wo_out,paste0("data/processed/metadata_per_MSOA_figures/removed_", area_name, ".csv" ))
   
   lsoa_over_5pct_removed <- compare_wo_out %>% filter(pct_removed > 5) %>% nrow()
   
@@ -152,7 +152,7 @@ for (i in 1:length(areas$ladcd)){
   
     h<-plot_grid(hist1, hist2,  labels = c('raw', "IQR filtered"), nrow=2) 
       
-    ggsave(paste0("data/processed/figures/hist_", area_name, ".png"),
+    ggsave(paste0("data/processed/metadata_per_MSOA_figures/hist_", area_name, ".png"),
        plot=h, scale=1, 
        width=12, height=20,
        units=c("cm"), dpi=200, limitsize=F)
@@ -176,7 +176,7 @@ for (i in 1:length(areas$ladcd)){
   
     p<-plot_grid(p1, p2,  labels = c('raw', "IQR filtered"), nrow=2) 
       
-    ggsave(paste0("data/processed/figures/boxplot_", area_name, ".png"),
+    ggsave(paste0("data/processed/metadata_per_MSOA_figures/boxplot_", area_name, ".png"),
        plot=p, scale=1, 
        width=30, height=25,
        units=c("cm"), dpi=200, limitsize=F)
@@ -213,7 +213,8 @@ vroom_write(tidy_lsoa, "data/processed/LSOA_IMD_HP_all.csv")
 
 ```{r}
 # deprivation score boxplot by LSOA /MSOA
-area = "E07000187"
+
+area = "E07000187" # mendips
 
 tidy_lsoa<- vroom("data/processed/LSOA_IMD_HP_all.csv")
 tidy_lsoa_sub <- tidy_lsoa %>% 
@@ -228,7 +229,7 @@ r2 <- ggplot(data = tidy_lsoa_sub,
   geom_boxplot( alpha=0.3) +
  theme(legend.position = "none",
         axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
-
+r2
 ```
 
 
@@ -308,8 +309,8 @@ for (area in areas){
   
   tidy_lsoa_sub <- tidy_lsoa %>% 
     filter(ladnm == area) %>% 
-    # ratio 1: not vety useful - will drop later
-    mutate(r1 = 1-round(DeprivationScore/ average_price_lsoa*1000,3)) %>% 
+    # ratio 1: not very useful - will drop later
+    #mutate(r1 = 1-round(DeprivationScore/ average_price_lsoa*1000,3)) %>% 
     # scale
     mutate(DeprivationScore_rev_scaled =  as.vector(scale(DeprivationScore_rev, center = TRUE, scale = TRUE))) %>% 
     mutate(average_price_lsoa_scaled =  as.vector(scale(average_price_lsoa, center = TRUE, scale = TRUE))) %>% 
@@ -323,6 +324,7 @@ for (area in areas){
 }
   
 write.csv(tidy_lsoa_r2_per_lad, "data/processed/tidy_lsoa_with_ladnm_r2.csv") 
+tidy_lsoa_r2_per_lad<- read.csv("data/processed/tidy_lsoa_with_ladnm_r2.csv")
 ```
 
 

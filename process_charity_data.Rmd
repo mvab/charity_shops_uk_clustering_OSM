@@ -20,8 +20,8 @@ options(scipen = 9)
 ```
 
 ```{r}
-# test working with OS POI data
-all_poi <- readr::read_delim("data/Download_retail_poi_england_rectangle_2046746/poi_4621139/poi-extract-2022_03.csv", delim="|")
+# testing working with OS POI data ----- !!!!! this data is not publicly available, so no data/results will be shared (this is for testing/ proof of principle / comparison with OSM data only)
+all_poi <- readr::read_delim("data/raw/Download_retail_poi_england_rectangle_2046746/poi_4621139/poi-extract-2022_03.csv", delim="|")
 allcharity <- all_poi %>%  filter(pointx_class == '09480714') 
 allcharity %>% count(name) %>% View()
 
@@ -42,9 +42,9 @@ dat_pst<- left_join(dat_pst, tmp, by = c("pcds" = "postcode" )) %>% distinct() #
 allcharity_w_loc<- left_join(allcharity_w_loc, dat_pst, by ="pcds") %>% filter(country == "England") # 7549
 dim(allcharity_w_loc)
 
-write.csv(allcharity_w_loc, "data/processed/charity_shops_w_loc.csv")
+write.csv(allcharity_w_loc, "data/processed/charity_shops_OS_w_loc.csv")
 
-allcharity_w_loc_OS <- read.csv("data/processed/charity_shops_w_loc.csv")
+allcharity_w_loc_OS <- read.csv("data/processed/charity_shops_OS_w_loc.csv")
 allcharity_w_loc_OS %>% count(ladnm) %>% View()
 ```
 
@@ -52,7 +52,7 @@ allcharity_w_loc_OS %>% count(ladnm) %>% View()
 ```{r}
 # merge meta with charity
 
-charity<- read.csv("data/processed/charity_shops_w_loc.csv") %>% 
+charity<- read.csv("data/processed/charity_shops_OS_w_loc.csv") %>% 
   select(name, latitude, longitude, lsoa11nm, msoa11nm, postcode=pcds)
 
 tidy_lsoa<-read.csv("data/processed/tidy_lsoa_with_ladnm_r2.csv") 
@@ -60,16 +60,16 @@ tidy_lsoa<-read.csv("data/processed/tidy_lsoa_with_ladnm_r2.csv")
 area_merged<- left_join(charity , 
                         tidy_lsoa %>% select(-latitude, -longitude))
 
-write.csv(area_merged, "data/processed/charity_shops_w_loc_w_area_ratings.csv")
-area_merged<- read.csv("data/processed/charity_shops_w_loc_w_area_ratings.csv")
+write.csv(area_merged, "data/processed/charity_shops_OS_w_loc_w_area_ratings.csv")
+area_merged<- read.csv("data/processed/charity_shops_OS_w_loc_w_area_ratings.csv")
 
 
 #generation test data for areas
 area_merged %>% filter(grepl("Bristol", lsoa11nm)) %>% 
-  write.csv("data/processed/charity_shops_w_loc_w_area_ratings_Bristol.csv")
+  write.csv("data/processed/charity_shops_OS_w_loc_w_area_ratings_Bristol.csv")
 
 area_merged %>% filter(grepl("Leeds", lsoa11nm)) %>% 
-  write.csv("data/processed/charity_shops_w_loc_w_area_ratings_Leeds.csv")
+  write.csv("data/processed/charity_shops_OS_w_loc_w_area_ratings_Leeds.csv")
 
 ```
 
@@ -77,8 +77,8 @@ area_merged %>% filter(grepl("Leeds", lsoa11nm)) %>%
 
 
 ```{r}
-# OSM data
-dat <- vroom("data/charity_coords_new.csv") %>% select(index, name, latitude = lat, longitude = lon) %>% mutate(row = row_number())
+# OSM data -- queried in python scriopt ...
+dat <- vroom("data/raw/charity_coords_OSM_raw.csv") %>% select(index, name, latitude = lat, longitude = lon) %>% mutate(row = row_number())
 dat_geo <- data_frame()
 
 for (i in 1:nrow(dat)){
@@ -107,15 +107,15 @@ for (i in 1:nrow(dat2_sub)){
 dat2_sub<- left_join(dat2_sub, tmp, by = c("postcode" )) %>% distinct() 
 charityOSM <- dat2 %>% filter(!is.na(postcode)) %>% bind_rows(dat2_sub) %>% distinct()
 
-vroom_write(charityOSM, "data/processed/charity_uk_OSM_coords_w_postcode.csv")
+vroom_write(charityOSM, "data/processed/charity_shops_OSM_coords_w_postcode.csv")
 
 
 tidy_lsoa<-read.csv("data/processed/tidy_lsoa_with_ladnm_r2.csv") 
 area_mergedOSM<- left_join(charityOSM , 
                         tidy_lsoa %>% select(-latitude, -longitude))
 
-write.csv(area_mergedOSM, "data/processed/charity_shopsOSM_w_loc_w_area_ratings.csv")
-
+write.csv(area_mergedOSM, "data/processed/charity_shops_OSM_w_loc_w_area_ratings.csv")
+area_mergedOSM<- vroom("data/processed/charity_shops_OSM_w_loc_w_area_ratings.csv")
 
 # get charity shops by area
 msoa_counts <- charityOSM %>% count(msoa11nm) 
@@ -127,42 +127,46 @@ counts_by_ladnn <- msoa_counts %>% group_by(ladnm) %>% summarise(total=sum(n))
 
 #generation test data for areas
 area_mergedOSM  %>% filter(grepl("Bristol", lsoa11nm)) %>% 
-  write.csv("data/processed/charity_shopsOSM_w_loc_w_area_ratings_Bristol.csv")
+  write.csv("data/processed/charity_shops_OSM_w_loc_w_area_ratings_Bristol.csv")
 
 area_mergedOSM  %>% filter(grepl("Leeds", lsoa11nm)) %>% 
-  write.csv("data/processed/charity_shopsOSM_w_loc_w_area_ratings_Leeds.csv")
+  write.csv("data/processed/charity_shops_OSM_w_loc_w_area_ratings_Leeds.csv")
 
 area_mergedOSM  %>% filter(grepl("Southampton", lsoa11nm)) %>% 
-  write.csv("data/processed/charity_shopsOSM_w_loc_w_area_ratings_Southampton.csv")
+  write.csv("data/processed/charity_shops_OSM_w_loc_w_area_ratings_Southampton.csv")
 
 area_mergedOSM  %>% filter(grepl("Brighton and Hove", lsoa11nm)) %>% 
-  write.csv("data/processed/charity_shopsOSM_w_loc_w_area_ratings_Brighton.csv")
+  write.csv("data/processed/charity_shops_OSM_w_loc_w_area_ratings_Brighton.csv")
 
 area_mergedOSM  %>% filter(grepl("Warwick", lsoa11nm)) %>% 
-  write.csv("data/processed/charity_shopsOSM_w_loc_w_area_ratings_Warwick.csv")
+  write.csv("data/processed/charity_shops_OSM_w_loc_w_area_ratings_Warwick.csv")
 
 area_mergedOSM  %>% filter(grepl("Newcastle upon Tyne", lsoa11nm)) %>% 
-  write.csv("data/processed/charity_shopsOSM_w_loc_w_area_ratings_Newcastle.csv")
+  write.csv("data/processed/charity_shops_OSM_w_loc_w_area_ratings_Newcastle.csv")
 
 area_mergedOSM  %>% filter(grepl("York", lsoa11nm)) %>% 
-  write.csv("data/processed/charity_shopsOSM_w_loc_w_area_ratings_York.csv")
+  write.csv("data/processed/charity_shops_OSM_w_loc_w_area_ratings_York.csv")
 
 area_mergedOSM  %>% filter(grepl("Cheltenham", lsoa11nm)) %>% 
-  write.csv("data/processed/charity_shopsOSM_w_loc_w_area_ratings_Cheltenham.csv")
+  write.csv("data/processed/charity_shops_OSM_w_loc_w_area_ratings_Cheltenham.csv")
 
 
 area_mergedOSM  %>% filter(grepl("Cambridge", lsoa11nm)) %>% 
-  write.csv("data/processed/charity_shopsOSM_w_loc_w_area_ratings_Cambridge.csv")
+  write.csv("data/processed/charity_shops_OSM_w_loc_w_area_ratings_Cambridge.csv")
 
 ```
 
 
 ```{r}
 # compare shops per area OS vs OSM
-
 os_vs_osm <- full_join(
-  area_merged %>% count(ladnm) %>% rename(os_n=n) %>% mutate(ladnm = gsub(", City of", "", ladnm)) %>%  mutate(ladnm = gsub(", County of", "", ladnm)),
-  counts_by_ladnn %>% rename(osm_n = total)) %>% 
+  area_merged %>% 
+    count(ladnm) %>% rename(os_n=n) %>% 
+    mutate(ladnm = gsub(", City of", "", ladnm)) %>% 
+    mutate(ladnm = gsub(", County of", "", ladnm)),
+  counts_by_ladnn %>% 
+    rename(osm_n = total)) %>% 
+  
   replace(is.na(.), 0) %>% 
   mutate(pct_missing = round(1 - (osm_n/os_n),2)) %>% 
   mutate(pct_missing = ifelse(pct_missing <0 , 0, pct_missing))
