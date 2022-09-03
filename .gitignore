@@ -1,3 +1,10 @@
+
+data/*
+location-based-recommendations/*
+*pdf
+*ppt
+
+
 # History files
 .Rhistory
 .Rapp.history
