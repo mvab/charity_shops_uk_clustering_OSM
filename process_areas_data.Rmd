@@ -1,0 +1,339 @@
+---
+title: "explore_deprivation_data"
+author: "Marina Vabistsevits"
+date: '2022-07-17'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(vroom)
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+library(cowplot)
+library(tidyr)
+library(sf)
+source("functions.R")
+options(scipen = 9)
+```
+
+
+# load deprivation data and location data
+```{r}
+# deprivation data
+imd_data <- vroom("data/imd2019lsoa.csv")
+dim(imd_data)
+imd_data_sub<-imd_data %>% filter(`DateCode` == 2019, `Measurement` == 'Score', 
+                            `Indices of Deprivation` == "a. Index of Multiple Deprivation (IMD)") %>% 
+                      select(FeatureCode, Value) %>% distinct()
+rm(imd_data)
+
+# postocode / LSOA /MSOA data
+areas_data<-vroom("data/PCD_OA_LSOA_MSOA_LAD_MAY19_UK_LU.csv") # lsoa11cd is the LSOA
+dim(areas_data)
+place_names_data <- vroom("data/MSOA-Names-1.17.csv") %>% select(msoa11cd, msoa11nm,msoa11hclnm)
+areas_data_sub<- areas_data %>% 
+  filter(lsoa11cd %in% imd_data_sub$FeatureCode) %>% 
+  select(pcds, lsoa11cd, lsoa11nm, ladnm, msoa11nm,msoa11cd, ladcd) %>%
+  left_join(place_names_data) %>% distinct()
+rm(areas_data)
+
+
+# country / postcode / longlat
+postcode_data <- vroom("data/open_postcode_geo.csv/open_postcode_geo.csv", col_names = F, col_select=c(X7, X1, X8,X9))
+postcode_data_sub <- postcode_data %>% filter(X7 == 'England') %>% 
+                       filter(X1 %in% areas_data_sub$pcds) %>% 
+                       select(postcode=X1, long=X8, lat=X9) %>% distinct()
+dim(postcode_data_sub)
+rm(postcode_data)
+
+
+# LSOA centroids
+lsoa_coords <- vroom("data/Lower_Layer_Super_Output_Areas_(December_2011)_Population_Weighted_Centroids.csv")
+lsoa_coords <- bind_cols(lsoa_coords, 
+                        lsoa_coords %>%
+                          st_as_sf(coords = c("X", "Y"), crs = 27700) %>%
+                          st_transform(4326) %>%
+                          st_coordinates() %>%
+                          as_tibble() %>% rename(longitude = X, latitude =Y)) %>% 
+                select("lsoa11cd" ,"lsoa11nm" ,"longitude" ,   "latitude" )
+vroom_write(lsoa_coords, "data/processed/lsoa_centroids.csv")
+
+
+data_merged<-left_join(postcode_data_sub , areas_data_sub, by=c("postcode"="pcds")) %>% 
+             left_join(imd_data_sub, by = c("lsoa11cd"='FeatureCode')) %>% 
+             rename(DeprivationScore = Value) %>% 
+             left_join(lsoa_coords)
+
+dim(data_merged) # 2184919
+vroom_write(data_merged, "data/processed/merged_deprivation_location.csv")
+
+rm(postcode_data_sub)
+rm(imd_data_sub)
+rm(data_merged)
+```
+
+
+```{r}
+# house price data
+all.files <- list.files(path = "data/price_paid/", pattern = "pricepaid*", full.names = T)
+l <- lapply(all.files, vroom, col_names = F, col_select=c(X2, X3, X4,X11,X13,X14,X9))
+
+house_price_data <- bind_rows(l) 
+dim(house_price_data)
+rm(l)
+
+house_price_data_sub<- house_price_data %>%
+  select(price=X2, date = X3, postcode = X4, LSOA = X11, area = X13, county = X14, type=X9) %>% 
+  filter(price >=38000 & price <= 10000000) %>% # 10M max
+  arrange(price) %>% 
+  filter(!grepl("ROOM|UNIT|OFFICE|GARAGE|POD|STORE|CHALET", type)) %>% select(-type) %>% 
+  left_join(areas_data_sub, by= c("postcode"="pcds")) 
+rm(house_price_data)
+
+vroom_write(house_price_data_sub, "data/processed/house_prices_merged.csv")
+```
+
+
+
+```{r}
+# for each area code, run house price outlier removal by LSOA
+prices_merged <-  vroom("data/processed/house_prices_merged.csv")
+
+areas <- data_merged %>% select(ladnm, ladcd) %>% distinct()
+
+tidied_prices_by_LSOA <- list()
+
+
+for (i in 1:length(areas$ladcd)){
+
+  data_merged_area <- data_merged%>% filter(ladcd == areas$ladcd[i])
+  prices_merged_area <-  prices_merged%>%filter(ladcd == areas$ladcd[i])
+  
+  area_name <- areas$ladnm[i]
+
+    # average house prices by lsoa 
+  
+  prices_merged_wo_out_by_lsoa <- 
+    prices_merged_area %>% 
+    group_by(lsoa11nm) %>% 
+    mutate(price2 = remove_outliers(price)) %>% # within each lsoa drop houses at 5/95% ICR
+    ungroup() %>% 
+    select(price2, everything()) %>% 
+    filter(!is.na(price2))
+
+  # unfiltered
+  prices_merged_gr_lsoa <- prices_merged_area %>% 
+      group_by(lsoa11nm) %>% 
+      summarise(price = mean(price)) %>% 
+      left_join(prices_merged_area %>% count(lsoa11nm)  )
+  
+  # outliers remoived
+  prices_merged_gr_lsoa_wo_out <- prices_merged_wo_out_by_lsoa %>% 
+      group_by(lsoa11nm) %>% 
+      summarise(price_wo_out = mean(price)) %>% 
+      left_join(prices_merged_wo_out_by_lsoa %>% count(lsoa11nm) %>% rename(n_wo_out=n))
+  
+  
+  compare_wo_out<- full_join(prices_merged_gr_lsoa, prices_merged_gr_lsoa_wo_out) %>% 
+    mutate(pct_removed = (1-(n_wo_out/n))*100 ) %>% arrange(-pct_removed)
+  
+  write.csv(compare_wo_out,paste0("data/processed/figures/removed_", area_name, ".csv" ))
+  
+  lsoa_over_5pct_removed <- compare_wo_out %>% filter(pct_removed > 5) %>% nrow()
+  
+  print(paste0(lsoa_over_5pct_removed, " LSOA in ", area_name, " have > 5% of houses removed"))
+  
+  # histograms
+   hist1 <- ggplot(prices_merged_area, aes(x=price))+ geom_histogram(color="black", fill="white")
+    hist2 <- ggplot(prices_merged_wo_out_by_lsoa, aes(x=price))+ geom_histogram(color="black", fill="white")
+  
+    h<-plot_grid(hist1, hist2,  labels = c('raw', "IQR filtered"), nrow=2) 
+      
+    ggsave(paste0("data/processed/figures/hist_", area_name, ".png"),
+       plot=h, scale=1, 
+       width=12, height=20,
+       units=c("cm"), dpi=200, limitsize=F)
+  
+  
+  # boxplots
+  p1 <- ggplot(data = prices_merged_area, 
+         mapping = aes(
+           x = lsoa11nm, y = price, fill = lsoa11nm, label =lsoa11nm)) + 
+     geom_boxplot() +
+    theme(legend.position = "none",
+          axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1))
+  
+  p2 <- ggplot(data = prices_merged_wo_out_by_lsoa, 
+         mapping = aes(
+           x = lsoa11nm, y = price, fill = lsoa11nm, label =lsoa11nm)) + 
+     geom_boxplot() +
+   theme(legend.position = "none",
+          axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1))
+    
+  
+    p<-plot_grid(p1, p2,  labels = c('raw', "IQR filtered"), nrow=2) 
+      
+    ggsave(paste0("data/processed/figures/boxplot_", area_name, ".png"),
+       plot=p, scale=1, 
+       width=30, height=25,
+       units=c("cm"), dpi=200, limitsize=F)
+    
+    
+
+    tidied_prices_by_LSOA[[areas$ladcd[i]]] <- prices_merged_gr_lsoa_wo_out
+}
+
+
+tidied_average_prices_by_LSOA_df<- bind_rows(tidied_prices_by_LSOA)
+vroom_write(tidied_average_prices_by_LSOA_df, "data/processed/LSOA_average_house_prices_removed_outliers.csv")
+
+
+```
+
+
+```{r}
+data_merged <- vroom("data/processed/merged_deprivation_location.csv") 
+tidied_average_prices_by_LSOA_df <- vroom("data/processed/LSOA_average_house_prices_removed_outliers.csv")
+
+tidy_lsoa <-
+  data_merged %>% 
+  select(lsoa11nm, lsoa11cd, msoa11nm,  msoa11cd, ladnm, ladcd, DeprivationScore, msoa11hclnm, longitude, latitude) %>% 
+  distinct() %>%
+  left_join(tidied_average_prices_by_LSOA_df) %>% 
+  rename(average_price_lsoa = price_wo_out, house_count = n_wo_out) 
+
+vroom_write(tidy_lsoa, "data/processed/LSOA_IMD_HP_all.csv")
+
+```
+
+
+
+```{r}
+# deprivation score boxplot by LSOA /MSOA
+area = "E07000187"
+
+tidy_lsoa<- vroom("data/processed/LSOA_IMD_HP_all.csv")
+tidy_lsoa_sub <- tidy_lsoa %>% 
+  filter(ladcd == area) %>%  
+  separate(col=lsoa11nm, into=c("tmp", "label_lsoa"), sep = " ", remove=F)
+
+r2 <- ggplot(data = tidy_lsoa_sub, 
+       mapping = aes(
+         x = msoa11hclnm, y = DeprivationScore, colour = msoa11nm, label = label_lsoa) )+ 
+  geom_point() +
+  geom_text(size=3, hjust=-0.22)+
+  geom_boxplot( alpha=0.3) +
+ theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+
+```
+
+
+```{r}
+# correlation 
+
+area = "E07000187"
+
+tidy_lsoa<- vroom("data/processed/LSOA_IMD_HP_all.csv")
+tidy_lsoa_sub <- tidy_lsoa %>% 
+  #filter(ladcd == area) %>%  
+  filter(ladnm == "Oxford") %>%  
+
+  separate(col=lsoa11nm, into=c("tmp", "label_lsoa"), sep = " ", remove=F)
+
+
+write.csv(tidy_lsoa_sub, paste0("data/processed/tidy_lsoa_", unique(tidy_lsoa_sub$ladnm), ".csv"))
+tidy_lsoa_sub<-read.csv( paste0("data/processed/tidy_lsoa_", unique(tidy_lsoa_sub$ladnm), ".csv"))
+
+
+# auto plot fpr cor
+ggpubr::ggscatter(tidy_lsoa_sub, x = "average_price_lsoa", y = "DeprivationScore", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson",
+          xlab = "Average house price in LSOA", ylab = "IMD Deprivation Score in LSOA")
+
+
+# manual correlation
+c <- ggplot(data = tidy_lsoa_sub, 
+       mapping = aes(
+         x = average_price_lsoa, y = DeprivationScore))+#, label =label_lsoa)) + 
+  geom_point(aes(colour=msoa11hclnm))+
+  geom_smooth()+
+  theme_minimal()+
+  #geom_text(size=3, vjust=-1)+
+ theme(legend.position = "right",
+        axis.text.x = element_text(angle = 0, vjust = 0.5, hjust=1))
+
+plotly::ggplotly(c)
+
+
+
+### calcualte correlation for all 
+
+areas <- unique(tidy_lsoa$ladnm)
+cor_df<- tibble()
+
+for (i in 1:length(areas)){
+  print(paste(i, areas[i]))
+  subs <- tidy_lsoa %>% filter(ladnm == areas[i])
+  if (nrow(subs) > 1){
+    cor <- broom::tidy(cor.test(subs$average_price_lsoa, subs$DeprivationScore)) %>%
+      select(estimate, p.value) %>% mutate(ladnm=areas[i])
+    cor_df <- bind_rows(cor_df, cor)
+  }
+}
+write.csv(cor_df, "data/processed/tidy_lsoa_correlation.csv")
+```
+
+
+
+```{r}
+# generate tidy LSOA data, ready for merging with charity data
+
+tidy_lsoa<-
+  vroom("data/processed/LSOA_IMD_HP_all.csv") %>% 
+  mutate(average_price_lsoa = round(average_price_lsoa, 0)) %>% 
+  mutate(DeprivationScore_rev = 100 - DeprivationScore) %>% 
+  mutate(DeprivationScore_rev_dec = DeprivationScore_rev/100) 
+
+
+areas <- unique(tidy_lsoa$ladnm)
+
+tidy_lsoa_r2_per_lad <- tibble()
+
+for (area in areas){
+  
+  tidy_lsoa_sub <- tidy_lsoa %>% 
+    filter(ladnm == area) %>% 
+    # ratio 1: not vety useful - will drop later
+    mutate(r1 = 1-round(DeprivationScore/ average_price_lsoa*1000,3)) %>% 
+    # scale
+    mutate(DeprivationScore_rev_scaled =  as.vector(scale(DeprivationScore_rev, center = TRUE, scale = TRUE))) %>% 
+    mutate(average_price_lsoa_scaled =  as.vector(scale(average_price_lsoa, center = TRUE, scale = TRUE))) %>% 
+    # ratio 2: makes sense whan done within an ladnm area
+    mutate(r2 = round(average_price_lsoa_scaled + DeprivationScore_rev_scaled,3) ) 
+
+  min_r2 <- abs(min(tidy_lsoa_sub$r2))+0.001
+  tidy_lsoa_sub <- tidy_lsoa_sub %>% mutate(r2_zero_min = r2+min_r2) 
+  
+  tidy_lsoa_r2_per_lad<- bind_rows(tidy_lsoa_r2_per_lad, tidy_lsoa_sub )
+}
+  
+write.csv(tidy_lsoa_r2_per_lad, "data/processed/tidy_lsoa_with_ladnm_r2.csv") 
+```
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,25 @@
+name: os_data_challenge
+
+channels:
+  - conda-forge
+
+dependencies:
+  - python=3.8
+  - pip
+  - pip:
+    - ipykernel
+    - scipy
+    - pandas
+    - geopandas
+    - numpy
+    - matplotlib
+    - seaborn
+    - plotly
+    - plotly_express
+    - descartes
+    - folium
+    - sklearn
+
+
+
+
