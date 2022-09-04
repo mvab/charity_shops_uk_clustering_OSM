@@ -4,6 +4,16 @@ htmls/*
 location-based-recommendations/*
 *pdf
 *pptx
+*png
+.env
+
+
+
+# Python
+python/.ipynb_checkpoints/*
+
+
+
 
 
 # History files
