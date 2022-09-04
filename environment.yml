@@ -19,7 +19,9 @@ dependencies:
     - descartes
     - folium
     - sklearn
-
+    - environs
+    - pgeocode
+    - pyrosm
 
 
 
